@@ -52,7 +52,9 @@ Before each call the server checks the token's `exp`. On expiry or HTTP 401 it r
 1. `sfcc-ci client:auth:renew` — works if you authenticated once with `sfcc-ci client:auth <client> <secret> --renew`;
 2. `sfcc-ci client:auth` — if `SFCC_OAUTH_CLIENT_ID` and `SFCC_OAUTH_CLIENT_SECRET` are set in the MCP server env.
 
-A token from `sfcc-ci auth:login` (browser flow) cannot be renewed this way: run `auth:login` again when it expires (~30 min).
+If both fail and the token has expired, the server runs `sfcc-ci auth:login` itself (same client as the previous token): a browser window opens, and with an active Account Manager session the login completes on its own. The server waits up to `SFCC_LOGIN_TIMEOUT_MS` (default 120000) and retries the call. Disable with `SFCC_AUTO_LOGIN=false`.
+The agent can also start the login explicitly with the `sfcc_login` tool.
+A 401 with a still-valid token (wrong instance or client) never opens the browser: it returns a hint instead.
 
 ### Error hints
 Failed calls return the OCAPI fault plus a `hint`: token rejected (wrong instance/tenant), client ID not added to OCAPI settings, missing resource permission (with the exact `resource_id` to add), unsupported `OCAPI_VERSION`, wrong host. Access tokens are always redacted from responses.

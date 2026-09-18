@@ -110,13 +110,42 @@ async function renewToken() {
     return null;
 }
 
-var RENEW_HINT = 'Could not renew the OCAPI token automatically. Do one of: '
-    + '(a) run "sfcc-ci auth:login" in a terminal (interactive, token lives ~30 min); '
-    + '(b) run "sfcc-ci client:auth <client> <secret> --renew" once so the server can renew it; '
-    + '(c) set SFCC_OAUTH_CLIENT_ID and SFCC_OAUTH_CLIENT_SECRET in the MCP server env.';
+var RENEW_HINT = 'Could not renew the OCAPI token automatically (browser login was not completed). '
+    + 'Agent: call the "sfcc_login" tool, or run "sfcc-ci auth:login" with Bash, then retry; ask the user to finish the login in the opened browser window. '
+    + 'For unattended renewal: run "sfcc-ci client:auth <client> <secret> --renew" once, '
+    + 'or set SFCC_OAUTH_CLIENT_ID and SFCC_OAUTH_CLIENT_SECRET in the MCP server env.';
+
+var LOGIN_TIMEOUT_MS = Number(process.env.SFCC_LOGIN_TIMEOUT_MS) || 120000;
+var lastClientId = null;
+var pendingLogin = null;
+
+/**
+ * Runs "sfcc-ci auth:login" (browser OAuth flow) and waits for it to finish.
+ * Only one login runs at a time; concurrent callers share it.
+ * If the Account Manager session in the browser is still active, it completes without input.
+ * @param {string} [clientId] - API client; defaults to the client of the last token
+ * @returns {Promise<string>} new token
+ */
+export function login(clientId) {
+    if (pendingLogin) { return pendingLogin; }
+    var client = clientId || lastClientId || process.env.SFCC_OAUTH_CLIENT_ID;
+    var args = ['auth:login'].concat(client ? [client] : []);
+    pendingLogin = execFileAsync('sfcc-ci', args, { timeout: LOGIN_TIMEOUT_MS })
+        .then(readToken)
+        .then(function (token) {
+            if (!token) { throw new Error('sfcc-ci auth:login finished but no token is available'); }
+            cachedToken = token;
+            return token;
+        }, function (e) {
+            throw new Error('sfcc-ci auth:login did not complete within ' + Math.round(LOGIN_TIMEOUT_MS / 1000) + 's (' + (e.killed ? 'timed out' : e.message.split('\n')[0]) + ')');
+        })
+        .finally(function () { pendingLogin = null; });
+    return pendingLogin;
+}
 
 /**
  * Returns a valid token, renewing it when it is missing, expiring, or forced.
+ * Order: current sfcc-ci token → silent renewal → browser login (unless SFCC_AUTO_LOGIN=false).
  * @param {boolean} [force] - renew even if the cached token looks valid
  * @returns {Promise<string>} bearer token
  */
@@ -124,9 +153,18 @@ async function getToken(force) {
     if (!force && cachedToken && !isExpiring(cachedToken)) {
         return cachedToken;
     }
-    var token = force ? null : await readToken();
-    if (!token || isExpiring(token)) {
-        token = await renewToken();
+    var current = force ? cachedToken : await readToken();
+    if (current) { lastClientId = decodeJwt(current).client_id || lastClientId; }
+    var token = !force && current && !isExpiring(current) ? current : await renewToken();
+    // A 401 with a still-valid token means a config problem (wrong instance / client), not expiry:
+    // opening a browser would not help and would repeat on every call.
+    var expired = !current || isExpiring(current);
+    if (!token && expired && process.env.SFCC_AUTO_LOGIN !== 'false') {
+        try {
+            token = await login();
+        } catch (e) {
+            throw new Error(e.message + '. ' + RENEW_HINT);
+        }
     }
     if (!token) {
         cachedToken = null;

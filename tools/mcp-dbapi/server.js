@@ -5,7 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { loadConfig, required, missingMessage, SENSITIVE_PREFERENCE_PATTERN } from './lib/config.js';
-import { createOcapiClient, redact } from './lib/ocapi.js';
+import { createOcapiClient, login, redact } from './lib/ocapi.js';
 import { createWebdavClient } from './lib/webdav.js';
 import { prepareProductImpex, preparePreferenceImpex } from './lib/impex.js';
 
@@ -62,6 +62,19 @@ var siteShape = {
 };
 
 var server = new McpServer({ name: 'sfcc-ocapi', version: '2.0.0' });
+
+// ---- Auth -----------------------------------------------------------------
+
+server.registerTool('sfcc_login', {
+    title: 'Log in to Account Manager',
+    description: 'Runs "sfcc-ci auth:login": opens a browser window for Account Manager login and waits for it to complete. '
+        + 'Use when another tool reports that the OCAPI token could not be renewed. Tell the user to finish the login in the browser.',
+    inputSchema: { clientId: z.string().optional().describe('API client ID; defaults to the client of the previous token') }
+}, async function (args) {
+    return toToolResult(login(args.clientId).then(function () {
+        return { loggedIn: true, note: 'Token obtained. Retry the previous call.' };
+    }));
+});
 
 // ---- Catalog --------------------------------------------------------------
 
