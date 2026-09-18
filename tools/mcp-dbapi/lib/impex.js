@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
-import { assertPathSegment, SENSITIVE_PREFERENCE_PATTERN } from './config.js';
+import { assertPathSegment, isSensitivePreference } from './config.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -88,7 +88,7 @@ export async function prepareProductImpex(config, catalogId, changes) {
 export async function preparePreferenceImpex(config, siteId, instanceType, changes) {
     assertPathSegment('siteId', siteId);
     changes.forEach(function (c) {
-        if (SENSITIVE_PREFERENCE_PATTERN.test(c.id)) {
+        if (isSensitivePreference(c.id)) {
             throw new Error('Refusing to export a credential-like preference: ' + c.id);
         }
     });

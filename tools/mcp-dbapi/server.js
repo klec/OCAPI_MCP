@@ -4,7 +4,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { loadConfig, required, missingMessage, SENSITIVE_PREFERENCE_PATTERN } from './lib/config.js';
+import { loadConfig, required, missingMessage, isSensitivePreference } from './lib/config.js';
 import { createOcapiClient, login, redact } from './lib/ocapi.js';
 import { createWebdavClient } from './lib/webdav.js';
 import { prepareProductImpex, preparePreferenceImpex } from './lib/impex.js';
@@ -263,6 +263,44 @@ async function resolveCustomerListId(args) {
     return { id: listId };
 }
 
+// Field names that carry personal or payment data; matched case-insensitively anywhere in the key.
+var PERSONAL_DATA_PATTERN = /payment|card|phone|mobile|fax|address|street|postal|zip|city|birth|email|iban|bank|account_number|ssn|tax_?id|(first|last|second)_?name|salutation|company/i;
+
+/**
+ * Masks values of personal-data fields recursively (login is kept: it identifies the record).
+ * @param {*} value - customer document part
+ * @returns {*} masked copy
+ */
+function maskPersonalData(value) {
+    if (Array.isArray(value)) { return value.map(maskPersonalData); }
+    if (value && typeof value === 'object') {
+        var out = {};
+        Object.keys(value).forEach(function (k) {
+            out[k] = PERSONAL_DATA_PATTERN.test(k) && value[k] !== null && value[k] !== '' ? '[masked]' : maskPersonalData(value[k]);
+        });
+        return out;
+    }
+    return value;
+}
+
+/**
+ * Picks non-personal identification and status fields of a customer.
+ * @param {Object} c - OCAPI customer document
+ * @returns {Object} summary
+ */
+function customerSummary(c) {
+    var credentials = c.credentials || {};
+    return {
+        customer_no: c.customer_no,
+        login: credentials.login || c.login,
+        enabled: credentials.enabled,
+        locked: credentials.locked,
+        creation_date: c.creation_date,
+        last_login_time: c.last_login_time,
+        last_visit_time: c.last_visit_time
+    };
+}
+
 server.registerTool('get_customer', {
     title: 'Get customer',
     description: 'Reads a customer by login or customer number. Pass groupId to check static group membership.',
@@ -271,6 +309,7 @@ server.registerTool('get_customer', {
         customerNo: z.string().optional().describe('Customer number'),
         customerListId: z.string().optional().describe('Customer list ID. Defaults to ' + (config.defaultCustomerListId || 'SFCC_DEFAULT_CUSTOMER_LIST, else the list assigned to siteId')),
         groupId: z.string().optional().describe('Customer group ID to check membership in (static groups)'),
+        view: z.enum(['summary', 'full']).optional().describe('summary (default): customer_no, login, status, dates. full: all fields with personal data (payment, card, phone, address, email, birthday) masked'),
         siteId: siteShape.siteId
     }
 }, async function (args) {
@@ -292,35 +331,75 @@ server.registerTool('get_customer', {
             customerNo = hit.data ? hit.data.customer_no : hit.customer_no;
         }
         var customer = await ocapi.dataGet(['customer_lists', listId, 'customers', customerNo]);
-        if (customer.httpStatus !== 200 || !args.groupId) { return customer; }
-        var siteId = required('siteId', args.siteId, config.defaultSiteId, 'SFCC_DEFAULT_SITE');
-        var member = await ocapi.dataGet(['sites', siteId, 'customer_groups', args.groupId, 'members', customerNo]);
-        return Object.assign({}, customer.body, { groupMembership: { groupId: args.groupId, isMember: member.httpStatus === 200 } });
+        if (customer.httpStatus !== 200) { return customer; }
+        var out = args.view === 'full' ? maskPersonalData(stripMeta(customer.body)) : customerSummary(customer.body);
+        out.customerListId = listId;
+        if (args.groupId) {
+            var siteId = required('siteId', args.siteId, config.defaultSiteId, 'SFCC_DEFAULT_SITE');
+            var member = await ocapi.dataGet(['sites', siteId, 'customer_groups', args.groupId, 'members', customerNo]);
+            out.groupMembership = { groupId: args.groupId, isMember: member.httpStatus === 200 };
+        }
+        return out;
     })());
 });
 
 // ---- Site preferences -----------------------------------------------------
 
+// preference ID -> group ID, filled once from the SitePreferences attribute groups
+var preferenceGroupIndex = null;
+
+/**
+ * Finds the preference group that contains a custom preference.
+ * @param {string} preferenceId - preference ID without "c_"
+ * @returns {Promise<{groupId?: string, error?: Object}>} group ID or an OCAPI error result
+ */
+async function findPreferenceGroup(preferenceId) {
+    if (!preferenceGroupIndex) {
+        var groups = await ocapi.dataGet(['system_object_definitions', 'SitePreferences', 'attribute_groups'], { count: 200, select: '(**)', expand: 'definition' });
+        if (groups.httpStatus !== 200) {
+            groups.body = Object.assign({ note: 'groupId was not given, so the server tried to find it in the SitePreferences attribute groups. Pass groupId to skip this lookup.' }, groups.body);
+            return { error: groups };
+        }
+        preferenceGroupIndex = {};
+        (groups.body.data || []).forEach(function (g) {
+            (g.attribute_definitions || []).forEach(function (d) {
+                preferenceGroupIndex[d.id] = g.id;
+            });
+        });
+    }
+    return { groupId: preferenceGroupIndex[preferenceId] };
+}
+
 server.registerTool('get_preference', {
     title: 'Get site preference',
-    description: 'Reads a custom site preference value from a preference group. Refuses credential-like IDs.',
+    description: 'Reads a custom site preference value. The preference group is found automatically when groupId is omitted. Refuses credential-like IDs.',
     inputSchema: Object.assign({
-        id: z.string().describe('Custom site preference ID'),
-        groupId: z.string().describe('Preference group ID the preference belongs to'),
+        id: z.string().describe('Custom site preference ID (without "c_")'),
+        groupId: z.string().optional().describe('Preference group ID; found automatically when omitted'),
         instanceType: z.enum(['development', 'staging', 'production', 'sandbox']).optional().describe('Instance type of the value; defaults to sandbox')
     }, siteShape)
 }, async function (args) {
-    if (SENSITIVE_PREFERENCE_PATTERN.test(args.id)) {
-        return toToolResult({ error: 'Refusing to read a credential-like preference: ' + args.id });
-    }
-    var siteId = required('siteId', args.siteId, config.defaultSiteId, 'SFCC_DEFAULT_SITE');
     return toToolResult((async function () {
-        var group = await ocapi.dataGet(['sites', siteId, 'site_preferences', 'preference_groups', args.groupId, args.instanceType || 'sandbox']);
+        if (isSensitivePreference(args.id)) {
+            throw new Error('Refusing to read a credential-like preference: ' + args.id
+                + '. If it is not a secret, add it to SFCC_PREFERENCE_ALLOWLIST in the MCP server env.');
+        }
+        var siteId = required('siteId', args.siteId, config.defaultSiteId, 'SFCC_DEFAULT_SITE');
+        var groupId = args.groupId;
+        if (!groupId) {
+            var found = await findPreferenceGroup(args.id);
+            if (found.error) { return found.error; }
+            if (!found.groupId) {
+                return { id: args.id, found: false, note: 'No SitePreferences attribute group contains "' + args.id + '". Check the ID (case-sensitive).' };
+            }
+            groupId = found.groupId;
+        }
+        var group = await ocapi.dataGet(['sites', siteId, 'site_preferences', 'preference_groups', groupId, args.instanceType || 'sandbox']);
         if (group.httpStatus !== 200) { return group; }
         var key = 'c_' + args.id;
         return {
             id: args.id,
-            groupId: args.groupId,
+            groupId: groupId,
             found: Object.prototype.hasOwnProperty.call(group.body, key),
             value: group.body[key]
         };
@@ -330,8 +409,8 @@ server.registerTool('get_preference', {
 // ---- Content / Page Designer ----------------------------------------------
 
 var contentShape = {
-    id: z.string().describe('Content asset or Page Designer page ID'),
-    libraryId: z.string().optional().describe('Library ID; defaults to the site ID (site-private library)'),
+    id: z.string().describe('Content asset ID'),
+    libraryId: z.string().optional().describe('Library ID. Defaults to ' + (config.defaultLibraryId || 'SFCC_DEFAULT_LIBRARY, else the site ID (site-private library)')),
     attributes: z.string().optional().describe('Comma-separated custom attribute IDs to include; all when omitted'),
     siteId: siteShape.siteId
 };
@@ -342,7 +421,7 @@ var contentShape = {
  * @returns {Promise<Object>} content with filtered custom attributes
  */
 async function readContent(args) {
-    var libraryId = required('libraryId', args.libraryId, args.siteId || config.defaultSiteId, 'SFCC_DEFAULT_SITE');
+    var libraryId = required('libraryId', args.libraryId, config.defaultLibraryId || args.siteId || config.defaultSiteId, 'SFCC_DEFAULT_LIBRARY');
     var content = await ocapi.dataGet(['libraries', libraryId, 'content', args.id]);
     if (content.httpStatus !== 200) { return content; }
     var b = content.body;
@@ -350,14 +429,6 @@ async function readContent(args) {
     Object.keys(b).forEach(function (k) { if (k.indexOf('c_') !== 0) { base[k] = b[k]; } });
     return Object.assign(base, { custom: pickCustom(b, args.attributes) });
 }
-
-server.registerTool('get_page_designer_page', {
-    title: 'Get Page Designer page',
-    description: 'Reads a Page Designer page (content object of type page) from a library.',
-    inputSchema: contentShape
-}, async function (args) {
-    return toToolResult(readContent(args));
-});
 
 server.registerTool('get_page_designer_content', {
     title: 'Get content asset',
@@ -371,10 +442,29 @@ server.registerTool('get_page_designer_content', {
 
 server.registerTool('list_logs', {
     title: 'List logs',
-    description: 'Lists log files in WebDAV /Logs, newest first. Read-only.',
-    inputSchema: { pattern: z.string().optional().describe('Name filter: glob like "custom-error-*" or substring') }
+    description: 'Lists log files in WebDAV /Logs, newest first. By default only files modified today (UTC). Read-only.',
+    inputSchema: {
+        pattern: z.string().optional().describe('Name filter: glob like "custom-error-*" or substring'),
+        days: z.number().int().min(1).max(90).optional().describe('Include files modified within the last N days (default 1 = today, UTC)'),
+        limit: z.number().int().min(1).max(500).optional().describe('Max files to return (default 30)')
+    }
 }, async function (args) {
-    return toToolResult(webdav.listLogs(args.pattern));
+    return toToolResult((async function () {
+        var days = args.days || 1;
+        var limit = args.limit || 30;
+        var since = new Date();
+        since.setUTCHours(0, 0, 0, 0);
+        since.setUTCDate(since.getUTCDate() - (days - 1));
+        var all = await webdav.listLogs(args.pattern);
+        var recent = all.filter(function (f) { return f.lastModified && new Date(f.lastModified) >= since; });
+        return {
+            since: since.toISOString(),
+            total: recent.length,
+            olderNotShown: all.length - recent.length,
+            truncated: recent.length > limit,
+            files: recent.slice(0, limit)
+        };
+    })());
 });
 
 server.registerTool('read_log', {

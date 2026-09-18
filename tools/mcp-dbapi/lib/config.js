@@ -28,6 +28,7 @@ export function loadConfig() {
         defaultCatalogId: process.env.SFCC_DEFAULT_CATALOG,
         defaultInventoryListId: process.env.SFCC_DEFAULT_INVENTORY_LIST,
         defaultCustomerListId: process.env.SFCC_DEFAULT_CUSTOMER_LIST,
+        defaultLibraryId: process.env.SFCC_DEFAULT_LIBRARY,
         impexOutDir: process.env.IMPEX_OUT_DIR || path.resolve(__dirname, '../../../impex-out')
     };
 }
@@ -81,4 +82,31 @@ export function missingMessage(name, envName) {
 }
 
 // Preference IDs that look like credentials are never read or exported.
-export var SENSITIVE_PREFERENCE_PATTERN = /(auth|password|passwd|secret|token|key|credential)/i;
+// Matched against whole words, so "keywordSearch" or "monkeyEnabled" pass while "apiKey" or "AUTH_TOKEN" do not.
+var SENSITIVE_WORDS = new Set(['key', 'keys', 'apikey', 'token', 'tokens', 'secret', 'secrets', 'password', 'passwords',
+    'passwd', 'pwd', 'credential', 'credentials', 'auth', 'authorization', 'passphrase', 'signature', 'salt']);
+
+/**
+ * Splits an ID into lowercase words by camelCase, "_", "-", "." and digits.
+ * @param {string} id - preference ID
+ * @returns {string[]} words
+ */
+function words(id) {
+    return String(id)
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+        .split(/[\s_.\-0-9]+/)
+        .filter(Boolean)
+        .map(function (w) { return w.toLowerCase(); });
+}
+
+/**
+ * Tells whether a preference ID looks like a credential. SFCC_PREFERENCE_ALLOWLIST (comma-separated IDs) overrides.
+ * @param {string} id - preference ID
+ * @returns {boolean} true when it must not be read or exported
+ */
+export function isSensitivePreference(id) {
+    var allow = (process.env.SFCC_PREFERENCE_ALLOWLIST || '').split(',').map(function (s) { return s.trim(); });
+    if (allow.indexOf(id) !== -1) { return false; }
+    return words(id).some(function (w) { return SENSITIVE_WORDS.has(w); });
+}

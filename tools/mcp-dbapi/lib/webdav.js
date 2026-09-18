@@ -67,7 +67,7 @@ export function createWebdavClient(config) {
      * @param {string} name - log file name from listLogs
      * @param {number} [tailBytes] - bytes from the end to read
      * @param {string} [grep] - case-insensitive substring filter for lines
-     * @returns {Promise<Object>} { name, bytesRead, text }
+     * @returns {Promise<Object>} { name, fileSize, bytesRead, truncated, rangeSupported, bytesReturned, text }
      */
     async function readLog(name, tailBytes, grep) {
         if (!LOG_FILE_PATTERN.test(name) || name.indexOf('..') !== -1) {
@@ -80,15 +80,47 @@ export function createWebdavClient(config) {
         if (response.status !== 200 && response.status !== 206) {
             throw new Error('WebDAV GET ' + name + ' failed: HTTP ' + response.status);
         }
-        var text = await response.text();
-        if (response.status === 200 && text.length > bytes) {
-            text = text.slice(-bytes);
+        var fileSize = null;
+        var buffer;
+        if (response.status === 206) {
+            // "bytes 8990000-8999999/9000000"
+            var total = (response.headers.get('content-range') || '').split('/')[1];
+            fileSize = total && total !== '*' ? Number(total) : null;
+            buffer = Buffer.from(await response.arrayBuffer());
+        } else {
+            // Range ignored: stream the file and keep only the last `bytes` in memory.
+            buffer = Buffer.alloc(0);
+            fileSize = 0;
+            for await (var chunk of response.body) {
+                fileSize += chunk.length;
+                buffer = Buffer.concat([buffer, Buffer.from(chunk)]);
+                if (buffer.length > bytes * 2) { buffer = buffer.subarray(buffer.length - bytes); }
+            }
+            if (buffer.length > bytes) { buffer = buffer.subarray(buffer.length - bytes); }
         }
+
+        var text = buffer.toString('utf8');
+        var truncated = fileSize === null ? buffer.length >= bytes : fileSize > buffer.length;
+        if (truncated) {
+            // drop the partial first line cut by the byte window
+            text = text.slice(text.indexOf('\n') + 1);
+        }
+        var result = {
+            name: name,
+            fileSize: fileSize,
+            bytesRead: buffer.length,
+            truncated: truncated,
+            rangeSupported: response.status === 206
+        };
         if (grep) {
             var needle = grep.toLowerCase();
-            text = text.split('\n').filter(function (line) { return line.toLowerCase().indexOf(needle) !== -1; }).join('\n');
+            var lines = text.split('\n').filter(function (line) { return line.toLowerCase().indexOf(needle) !== -1; });
+            result.matchedLines = lines.length;
+            text = lines.join('\n');
         }
-        return { name: name, bytesRead: bytes, text: text };
+        result.bytesReturned = Buffer.byteLength(text);
+        result.text = text;
+        return result;
     }
 
     return { listLogs: listLogs, readLog: readLog };

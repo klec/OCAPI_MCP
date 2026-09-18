@@ -13,7 +13,7 @@ var cachedToken = null;
 var RESOURCE_NAMES = new Set([
     'products', 'variations', 'inventory_lists', 'product_inventory_records', 'catalogs', 'categories',
     'sites', 'customer_groups', 'members', 'customer_lists', 'customers', 'customer_search',
-    'site_preferences', 'preference_groups', 'libraries', 'content'
+    'site_preferences', 'preference_groups', 'libraries', 'content', 'system_object_definitions', 'attribute_groups'
 ]);
 
 /**
@@ -118,6 +118,7 @@ var RENEW_HINT = 'Could not renew the OCAPI token automatically (browser login w
 var LOGIN_TIMEOUT_MS = Number(process.env.SFCC_LOGIN_TIMEOUT_MS) || 120000;
 var lastClientId = null;
 var pendingLogin = null;
+var pendingToken = null;
 
 /**
  * Runs "sfcc-ci auth:login" (browser OAuth flow) and waits for it to finish.
@@ -149,10 +150,23 @@ export function login(clientId) {
  * @param {boolean} [force] - renew even if the cached token looks valid
  * @returns {Promise<string>} bearer token
  */
-async function getToken(force) {
+function getToken(force) {
     if (!force && cachedToken && !isExpiring(cachedToken)) {
-        return cachedToken;
+        return Promise.resolve(cachedToken);
     }
+    // Parallel tool calls share one refresh instead of starting several sfcc-ci processes.
+    if (!pendingToken) {
+        pendingToken = refreshToken(force).finally(function () { pendingToken = null; });
+    }
+    return pendingToken;
+}
+
+/**
+ * Obtains a token: current sfcc-ci token → silent renewal → browser login.
+ * @param {boolean} [force] - skip the current token (it was rejected)
+ * @returns {Promise<string>} bearer token
+ */
+async function refreshToken(force) {
     var current = force ? cachedToken : await readToken();
     if (current) { lastClientId = decodeJwt(current).client_id || lastClientId; }
     var token = !force && current && !isExpiring(current) ? current : await renewToken();
@@ -191,6 +205,16 @@ function explainFault(ctx) {
     }
     if (/ResourcePathNotFound|UnknownApi|UnknownResource/i.test(type)) {
         return 'The API path was not found. Check OCAPI_VERSION ("' + ctx.version + '") and the host ("' + ctx.hostname + '"); the path was ' + ctx.resource + '.';
+    }
+    // OCAPI treats every POST (including read-only *_search) as a write and answers 401 here.
+    if (/UnauthorizedWriteAccess/i.test(type)) {
+        return 'OCAPI treats ' + ctx.method + ' ' + ctx.resource + ' as a write, so the resource needs write permission for client ' + clientId + '. '
+            + 'Add in ' + settingsPath + ': '
+            + JSON.stringify({ resource_id: ctx.resourcePattern, methods: [ctx.method.toLowerCase()], read_attributes: '(**)', write_attributes: '(**)' })
+            + '. The token itself is fine.';
+    }
+    if (/LibraryNotFound/i.test(type)) {
+        return 'Library not found. Site-private libraries have the site ID (e.g. "PM"); pass libraryId or set SFCC_DEFAULT_LIBRARY in the MCP server env.';
     }
     if (/InvalidClientId|UnknownClient|ClientIdNotConfigured/i.test(type)) {
         return 'Client ID ' + clientId + ' is not configured for this API on ' + ctx.hostname + '. Add it in ' + settingsPath + ' — see README "OCAPI settings" for the full JSON.';
@@ -236,15 +260,17 @@ export function createOcapiClient(config) {
         }
 
         var response = await attempt(false);
-        if (req.withToken && response.status === 401) {
+        var text = await response.text();
+        // Missing write permission also comes as 401, but a new token would not change it.
+        if (req.withToken && response.status === 401 && !/UnauthorizedWriteAccess/.test(text)) {
             try {
                 response = await attempt(true);
+                text = await response.text();
             } catch (e) {
                 // renewal failed: keep the original 401 and explain it below
             }
         }
 
-        var text = await response.text();
         var body;
         try {
             body = text ? JSON.parse(text) : {};

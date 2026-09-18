@@ -20,10 +20,10 @@ sfcc-ci auth:login                # or: sfcc-ci client:auth
 ```
 The OCAPI token is taken from `sfcc-ci client:auth:token`. `dw.json` username/password (WebDAV access key) are used for logs only; `client-id` is used for the Shop API price call.
 
-Optional env: `SFCC_HOST`, `SFCC_USERNAME`, `SFCC_PASSWORD`, `SFCC_CLIENT_ID`, `SFCC_DW_JSON_PATH`, `OCAPI_VERSION` (default `v23_2`), `SFCC_DEFAULT_SITE`, `SFCC_DEFAULT_CATALOG`, `SFCC_DEFAULT_INVENTORY_LIST`, `SFCC_DEFAULT_CUSTOMER_LIST` (if unset, `get_customer` takes the list assigned to `siteId` via `/sites/{id}`), `IMPEX_OUT_DIR`.
+Optional env: `SFCC_HOST`, `SFCC_USERNAME`, `SFCC_PASSWORD`, `SFCC_CLIENT_ID`, `SFCC_DW_JSON_PATH`, `OCAPI_VERSION` (default `v23_2`), `SFCC_DEFAULT_SITE`, `SFCC_DEFAULT_CATALOG`, `SFCC_DEFAULT_INVENTORY_LIST`, `SFCC_DEFAULT_CUSTOMER_LIST` (if unset, `get_customer` takes the list assigned to `siteId` via `/sites/{id}`), `SFCC_DEFAULT_LIBRARY` (default: site ID), `SFCC_PREFERENCE_ALLOWLIST` (preference IDs wrongly treated as secrets), `SFCC_AUTO_LOGIN`, `SFCC_LOGIN_TIMEOUT_MS`, `IMPEX_OUT_DIR`.
 
 ### OCAPI settings (Business Manager → Administration → Site Development → Open Commerce API Settings)
-Data API, Global, for your client — `GET` only, plus `POST` on `customer_search`:
+Data API, Global, for your client — `GET` only, plus `POST` on `customer_search`. OCAPI treats any POST as a write, so `customer_search` needs `write_attributes` even though it only searches:
 ```json
 {
   "_v": "23.2",
@@ -38,8 +38,9 @@ Data API, Global, for your client — `GET` only, plus `POST` on `customer_searc
       { "resource_id": "/sites/*/customer_groups/*", "methods": ["get"], "read_attributes": "(**)" },
       { "resource_id": "/sites/*/customer_groups/*/members/*", "methods": ["get"], "read_attributes": "(**)" },
       { "resource_id": "/customer_lists/*/customers/*", "methods": ["get"], "read_attributes": "(**)" },
-      { "resource_id": "/customer_lists/*/customer_search", "methods": ["post"], "read_attributes": "(**)" },
+      { "resource_id": "/customer_lists/*/customer_search", "methods": ["post"], "read_attributes": "(**)", "write_attributes": "(**)" },
       { "resource_id": "/sites/*/site_preferences/preference_groups/*/*", "methods": ["get"], "read_attributes": "(**)" },
+      { "resource_id": "/system_object_definitions/*/attribute_groups", "methods": ["get"], "read_attributes": "(**)" },
       { "resource_id": "/libraries/*/content/*", "methods": ["get"], "read_attributes": "(**)" }
     ]
   }]
@@ -79,4 +80,5 @@ npx @modelcontextprotocol/inspector node tools/mcp-dbapi/server.js
 ## Safety
 - Every value placed in a URL path is validated (no `/`, `..`, `?`, `#`).
 - Preference IDs that look like credentials (`auth`, `password`, `secret`, `token`, `key`, `credential`) are refused on read and on export.
-- WebDAV client implements only `PROPFIND` and `GET` on `/Logs`.
+- WebDAV client implements only `PROPFIND` and `GET` on `/Logs`. `list_logs` shows today's files by default; `read_log` reports real byte counts and `truncated`.
+- `get_customer` returns a short non-personal summary by default; `view: "full"` masks payment, card, phone, address, email, name and birthday fields.
