@@ -54,14 +54,30 @@ export function assertPathSegment(name, value) {
  * @param {string} name - argument name, for the error message
  * @param {string} value - value from tool arguments
  * @param {string} fallback - configured default
+ * @param {string} [envName] - env variable that holds the default
  * @returns {string} resolved value
  */
-export function required(name, value, fallback) {
+export function required(name, value, fallback, envName) {
     var resolved = value || fallback;
     if (!resolved) {
-        throw new Error(name + ' is required (pass it or set its default in env)');
+        throw new Error(missingMessage(name, envName));
     }
     return resolved;
+}
+
+/**
+ * Explains how to provide a missing argument.
+ * @param {string} name - argument name
+ * @param {string} [envName] - env variable that holds the default
+ * @returns {string} message
+ */
+export function missingMessage(name, envName) {
+    var message = '"' + name + '" is required. Pass it in the tool call';
+    if (envName) {
+        message += ', or set a default in the MCP server env, e.g. in .mcp.json: '
+            + '"mcpServers": { "<server>": { "env": { "' + envName + '": "<value>" } } } and restart the server';
+    }
+    return message + '.';
 }
 
 // Preference IDs that look like credentials are never read or exported.

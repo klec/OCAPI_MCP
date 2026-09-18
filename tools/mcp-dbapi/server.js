@@ -4,7 +4,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { loadConfig, required, SENSITIVE_PREFERENCE_PATTERN } from './lib/config.js';
+import { loadConfig, required, missingMessage, SENSITIVE_PREFERENCE_PATTERN } from './lib/config.js';
 import { createOcapiClient, redact } from './lib/ocapi.js';
 import { createWebdavClient } from './lib/webdav.js';
 import { prepareProductImpex, preparePreferenceImpex } from './lib/impex.js';
@@ -175,7 +175,7 @@ server.registerTool('get_price', {
     description: 'Reads the effective price and per-pricebook prices for a product (Shop API, public data).',
     inputSchema: Object.assign({ id: z.string().describe('Product ID') }, siteShape)
 }, async function (args) {
-    var siteId = required('siteId', args.siteId, config.defaultSiteId);
+    var siteId = required('siteId', args.siteId, config.defaultSiteId, 'SFCC_DEFAULT_SITE');
     return toToolResult(ocapi.shopGet(siteId, ['products', args.id], { expand: 'prices' }));
 });
 
@@ -187,7 +187,7 @@ server.registerTool('get_inventory', {
         inventoryListId: z.string().optional().describe('Inventory list ID' + (config.defaultInventoryListId ? '. Defaults to ' + config.defaultInventoryListId : ''))
     }
 }, async function (args) {
-    var listId = required('inventoryListId', args.inventoryListId, config.defaultInventoryListId);
+    var listId = required('inventoryListId', args.inventoryListId, config.defaultInventoryListId, 'SFCC_DEFAULT_INVENTORY_LIST');
     return toToolResult(ocapi.dataGet(['inventory_lists', listId, 'product_inventory_records', args.id]));
 });
 
@@ -200,7 +200,7 @@ server.registerTool('get_category_custom_attributes', {
         attributes: z.string().optional().describe('Comma-separated custom attribute IDs; all when omitted')
     }
 }, async function (args) {
-    var catalogId = required('catalogId', args.catalogId, config.defaultCatalogId);
+    var catalogId = required('catalogId', args.catalogId, config.defaultCatalogId, 'SFCC_DEFAULT_CATALOG');
     return toToolResult((async function () {
         var category = await ocapi.dataGet(['catalogs', catalogId, 'categories', args.id]);
         if (category.httpStatus !== 200) { return category; }
@@ -216,9 +216,39 @@ server.registerTool('get_customer_group', {
     description: 'Reads a customer group by ID, including type and custom attributes.',
     inputSchema: Object.assign({ id: z.string().describe('Customer group ID') }, siteShape)
 }, async function (args) {
-    var siteId = required('siteId', args.siteId, config.defaultSiteId);
+    var siteId = required('siteId', args.siteId, config.defaultSiteId, 'SFCC_DEFAULT_SITE');
     return toToolResult(ocapi.dataGet(['sites', siteId, 'customer_groups', args.id]));
 });
+
+/**
+ * Resolves the customer list: argument → SFCC_DEFAULT_CUSTOMER_LIST → list assigned to the site.
+ * @param {Object} args - tool arguments ({ customerListId, siteId })
+ * @returns {Promise<{id?: string, error?: Object}>} list ID or an error result for the agent
+ */
+async function resolveCustomerListId(args) {
+    var listId = args.customerListId || config.defaultCustomerListId;
+    if (listId) { return { id: listId }; }
+
+    var siteId = args.siteId || config.defaultSiteId;
+    if (!siteId) {
+        throw new Error(missingMessage('customerListId', 'SFCC_DEFAULT_CUSTOMER_LIST')
+            + ' Alternatively pass siteId (or set SFCC_DEFAULT_SITE) and the list assigned to that site will be used.');
+    }
+    var site = await ocapi.dataGet(['sites', siteId]);
+    if (site.httpStatus !== 200) {
+        site.body = Object.assign({
+            note: 'customerListId was not given, so the server tried to read it from site "' + siteId + '". '
+                + 'Pass customerListId or set SFCC_DEFAULT_CUSTOMER_LIST to skip this lookup.'
+        }, site.body);
+        return { error: site };
+    }
+    var link = site.body.customer_list_link || {};
+    listId = link.customer_list_id || link.id;
+    if (!listId) {
+        throw new Error('Site "' + siteId + '" has no customer list in its OCAPI document. ' + missingMessage('customerListId', 'SFCC_DEFAULT_CUSTOMER_LIST'));
+    }
+    return { id: listId };
+}
 
 server.registerTool('get_customer', {
     title: 'Get customer',
@@ -226,27 +256,31 @@ server.registerTool('get_customer', {
     inputSchema: {
         login: z.string().optional().describe('Customer login/email'),
         customerNo: z.string().optional().describe('Customer number'),
-        customerListId: z.string().optional().describe('Customer list ID' + (config.defaultCustomerListId ? '. Defaults to ' + config.defaultCustomerListId : '')),
+        customerListId: z.string().optional().describe('Customer list ID. Defaults to ' + (config.defaultCustomerListId || 'SFCC_DEFAULT_CUSTOMER_LIST, else the list assigned to siteId')),
         groupId: z.string().optional().describe('Customer group ID to check membership in (static groups)'),
         siteId: siteShape.siteId
     }
 }, async function (args) {
-    var listId = required('customerListId', args.customerListId, config.defaultCustomerListId);
     return toToolResult((async function () {
+        if (!args.customerNo && !args.login) { throw new Error('Provide login or customerNo.'); }
+        var resolved = await resolveCustomerListId(args);
+        if (resolved.error) { return resolved.error; }
+        var listId = resolved.id;
+
         var customerNo = args.customerNo;
         if (!customerNo) {
-            if (!args.login) { throw new Error('Provide login or customerNo'); }
             var search = await ocapi.dataSearch(['customer_lists', listId, 'customer_search'], {
                 query: { term_query: { fields: ['login'], operator: 'is', values: [args.login] } },
                 select: '(**)'
             });
+            if (search.httpStatus !== 200) { return search; }
             var hit = search.body.hits && search.body.hits[0];
             if (!hit) { return { found: false, login: args.login }; }
             customerNo = hit.data ? hit.data.customer_no : hit.customer_no;
         }
         var customer = await ocapi.dataGet(['customer_lists', listId, 'customers', customerNo]);
         if (customer.httpStatus !== 200 || !args.groupId) { return customer; }
-        var siteId = required('siteId', args.siteId, config.defaultSiteId);
+        var siteId = required('siteId', args.siteId, config.defaultSiteId, 'SFCC_DEFAULT_SITE');
         var member = await ocapi.dataGet(['sites', siteId, 'customer_groups', args.groupId, 'members', customerNo]);
         return Object.assign({}, customer.body, { groupMembership: { groupId: args.groupId, isMember: member.httpStatus === 200 } });
     })());
@@ -266,7 +300,7 @@ server.registerTool('get_preference', {
     if (SENSITIVE_PREFERENCE_PATTERN.test(args.id)) {
         return toToolResult({ error: 'Refusing to read a credential-like preference: ' + args.id });
     }
-    var siteId = required('siteId', args.siteId, config.defaultSiteId);
+    var siteId = required('siteId', args.siteId, config.defaultSiteId, 'SFCC_DEFAULT_SITE');
     return toToolResult((async function () {
         var group = await ocapi.dataGet(['sites', siteId, 'site_preferences', 'preference_groups', args.groupId, args.instanceType || 'sandbox']);
         if (group.httpStatus !== 200) { return group; }
@@ -295,7 +329,7 @@ var contentShape = {
  * @returns {Promise<Object>} content with filtered custom attributes
  */
 async function readContent(args) {
-    var libraryId = required('libraryId', args.libraryId, args.siteId || config.defaultSiteId);
+    var libraryId = required('libraryId', args.libraryId, args.siteId || config.defaultSiteId, 'SFCC_DEFAULT_SITE');
     var content = await ocapi.dataGet(['libraries', libraryId, 'content', args.id]);
     if (content.httpStatus !== 200) { return content; }
     var b = content.body;
@@ -373,7 +407,7 @@ server.registerTool('prepare_impex_preference', {
         changes: z.array(z.object({ id: z.string(), value: z.string() })).min(1)
     }, siteShape)
 }, async function (args) {
-    var siteId = required('siteId', args.siteId, config.defaultSiteId);
+    var siteId = required('siteId', args.siteId, config.defaultSiteId, 'SFCC_DEFAULT_SITE');
     return toToolResult((async function () {
         return Object.assign({ note: IMPEX_NOTE }, await preparePreferenceImpex(config, siteId, args.instanceType, args.changes));
     })());

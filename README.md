@@ -20,7 +20,7 @@ sfcc-ci auth:login                # or: sfcc-ci client:auth
 ```
 The OCAPI token is taken from `sfcc-ci client:auth:token`. `dw.json` username/password (WebDAV access key) are used for logs only; `client-id` is used for the Shop API price call.
 
-Optional env: `SFCC_HOST`, `SFCC_USERNAME`, `SFCC_PASSWORD`, `SFCC_CLIENT_ID`, `SFCC_DW_JSON_PATH`, `OCAPI_VERSION` (default `v23_2`), `SFCC_DEFAULT_SITE`, `SFCC_DEFAULT_CATALOG`, `SFCC_DEFAULT_INVENTORY_LIST`, `SFCC_DEFAULT_CUSTOMER_LIST`, `IMPEX_OUT_DIR`.
+Optional env: `SFCC_HOST`, `SFCC_USERNAME`, `SFCC_PASSWORD`, `SFCC_CLIENT_ID`, `SFCC_DW_JSON_PATH`, `OCAPI_VERSION` (default `v23_2`), `SFCC_DEFAULT_SITE`, `SFCC_DEFAULT_CATALOG`, `SFCC_DEFAULT_INVENTORY_LIST`, `SFCC_DEFAULT_CUSTOMER_LIST` (if unset, `get_customer` takes the list assigned to `siteId` via `/sites/{id}`), `IMPEX_OUT_DIR`.
 
 ### OCAPI settings (Business Manager → Administration → Site Development → Open Commerce API Settings)
 Data API, Global, for your client — `GET` only, plus `POST` on `customer_search`:
@@ -34,6 +34,7 @@ Data API, Global, for your client — `GET` only, plus `POST` on `customer_searc
       { "resource_id": "/products/*/variations", "methods": ["get"], "read_attributes": "(**)" },
       { "resource_id": "/inventory_lists/*/product_inventory_records/*", "methods": ["get"], "read_attributes": "(**)" },
       { "resource_id": "/catalogs/*/categories/*", "methods": ["get"], "read_attributes": "(**)" },
+      { "resource_id": "/sites/*", "methods": ["get"], "read_attributes": "(**)" },
       { "resource_id": "/sites/*/customer_groups/*", "methods": ["get"], "read_attributes": "(**)" },
       { "resource_id": "/sites/*/customer_groups/*/members/*", "methods": ["get"], "read_attributes": "(**)" },
       { "resource_id": "/customer_lists/*/customers/*", "methods": ["get"], "read_attributes": "(**)" },
