@@ -322,13 +322,19 @@ server.registerTool('get_customer', {
         var customerNo = args.customerNo;
         if (!customerNo) {
             var search = await ocapi.dataSearch(['customer_lists', listId, 'customer_search'], {
-                query: { term_query: { fields: ['login'], operator: 'is', values: [args.login] } },
+                query: { term_query: { fields: ['credentials.login', 'email'], operator: 'is', values: [args.login] } },
                 select: '(**)'
             });
             if (search.httpStatus !== 200) { return search; }
-            var hit = search.body.hits && search.body.hits[0];
-            if (!hit) { return { found: false, login: args.login }; }
-            customerNo = hit.data ? hit.data.customer_no : hit.customer_no;
+            var numbers = (search.body.hits || []).map(function (hit) {
+                return hit.data ? hit.data.customer_no : hit.customer_no;
+            });
+            if (!numbers.length) { return { found: false, login: args.login }; }
+            // login and email are searched together, so they may point to different customers
+            if (numbers.length > 1) {
+                return { found: true, ambiguous: true, customerNos: numbers, note: 'Several customers match this login or email. Call get_customer with customerNo.' };
+            }
+            customerNo = numbers[0];
         }
         var customer = await ocapi.dataGet(['customer_lists', listId, 'customers', customerNo]);
         if (customer.httpStatus !== 200) { return customer; }
@@ -456,17 +462,19 @@ function plain(value) {
  * @param {Function} map - item -> compact record
  * @returns {Promise<Object>} { total, start, count, next, data } or OCAPI error
  */
+var FILTER_PAGE_SIZE = 200;
+var FILTER_MAX_PAGES = 25;
+
 async function listCollection(segments, args, map) {
+    if (args.filter) {
+        return filterCollection(segments, args.filter, map);
+    }
     var start = args.start || 0;
     var count = Math.min(args.count || 50, 200);
     var page = await ocapi.dataGet(segments, { start: start, count: count, select: '(**)' });
     if (page.httpStatus !== 200) { return page; }
-    var data = (page.body.data || []).map(map);
-    if (args.filter) {
-        var needle = args.filter.toLowerCase();
-        data = data.filter(function (item) { return JSON.stringify(item).toLowerCase().indexOf(needle) !== -1; });
-    }
     var total = page.body.total || 0;
+    var data = (page.body.data || []).map(map);
     return {
         total: total,
         start: start,
@@ -476,10 +484,42 @@ async function listCollection(segments, args, map) {
     };
 }
 
+/**
+ * Scans all pages of a collection and returns items matching a substring.
+ * @param {string[]} segments - collection path
+ * @param {string} filter - case-insensitive substring matched against the compact record
+ * @param {Function} map - item -> compact record
+ * @returns {Promise<Object>} { total, scanned, complete, matched, data } or OCAPI error
+ */
+async function filterCollection(segments, filter, map) {
+    var needle = filter.toLowerCase();
+    var matches = [];
+    var start = 0;
+    var total = 0;
+    for (var i = 0; i < FILTER_MAX_PAGES; i++) {
+        var page = await ocapi.dataGet(segments, { start: start, count: FILTER_PAGE_SIZE, select: '(**)' });
+        if (page.httpStatus !== 200) { return page; }
+        total = page.body.total || 0;
+        var items = page.body.data || [];
+        items.map(map).forEach(function (item) {
+            if (JSON.stringify(item).toLowerCase().indexOf(needle) !== -1) { matches.push(item); }
+        });
+        start += items.length;
+        if (!items.length || start >= total) { break; }
+    }
+    var result = { filter: filter, total: total, scanned: start, complete: start >= total, matched: matches.length, data: matches };
+    if (!result.complete) {
+        result.note = 'Stopped after ' + start + ' of ' + total + ' records; refine the filter. Records beyond that were not checked.';
+    } else if (!matches.length) {
+        result.note = 'No matches among all ' + total + ' records.';
+    }
+    return result;
+}
+
 var pageShape = {
-    start: z.number().int().min(0).optional().describe('Paging offset (default 0)'),
-    count: z.number().int().min(1).max(200).optional().describe('Page size (default 50, max 200)'),
-    filter: z.string().optional().describe('Case-insensitive substring filter applied to the returned page')
+    start: z.number().int().min(0).optional().describe('Paging offset (default 0); ignored when filter is set'),
+    count: z.number().int().min(1).max(200).optional().describe('Page size (default 50, max 200); ignored when filter is set'),
+    filter: z.string().optional().describe('Case-insensitive substring (ID, name, ...). Searches ALL records (up to ' + (FILTER_PAGE_SIZE * FILTER_MAX_PAGES) + '), not just one page')
 };
 
 server.registerTool('list_sites', {
