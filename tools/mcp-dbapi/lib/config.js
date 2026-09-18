@@ -66,6 +66,16 @@ export function required(name, value, fallback, envName) {
     return resolved;
 }
 
+// Tool that lists valid values for an argument.
+export var LOOKUP_TOOLS = {
+    siteId: 'list_sites',
+    customerListId: 'list_sites',
+    libraryId: 'list_sites',
+    catalogId: 'list_catalogs',
+    inventoryListId: 'list_inventory_lists',
+    groupId: 'list_customer_groups'
+};
+
 /**
  * Explains how to provide a missing argument.
  * @param {string} name - argument name
@@ -73,7 +83,8 @@ export function required(name, value, fallback, envName) {
  * @returns {string} message
  */
 export function missingMessage(name, envName) {
-    var message = '"' + name + '" is required. Pass it in the tool call';
+    var message = '"' + name + '" is required. Pass it in the tool call'
+        + (LOOKUP_TOOLS[name] ? ' (find it with the "' + LOOKUP_TOOLS[name] + '" tool)' : '');
     if (envName) {
         message += ', or set a default in the MCP server env, e.g. in .mcp.json: '
             + '"mcpServers": { "<server>": { "env": { "' + envName + '": "<value>" } } } and restart the server';

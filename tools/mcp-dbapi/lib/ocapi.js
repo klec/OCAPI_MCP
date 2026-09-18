@@ -11,7 +11,7 @@ var cachedToken = null;
 
 // Fixed OCAPI path parts used by the tools; every other segment is an ID (shown as "*" in hints).
 var RESOURCE_NAMES = new Set([
-    'products', 'variations', 'inventory_lists', 'product_inventory_records', 'catalogs', 'categories',
+    'products', 'inventory_lists', 'product_inventory_records', 'catalogs', 'categories',
     'sites', 'customer_groups', 'members', 'customer_lists', 'customers', 'customer_search',
     'site_preferences', 'preference_groups', 'libraries', 'content', 'system_object_definitions', 'attribute_groups'
 ]);

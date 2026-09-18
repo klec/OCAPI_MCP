@@ -58,7 +58,7 @@ function pickCustom(doc, list) {
 }
 
 var siteShape = {
-    siteId: z.string().optional().describe('SFCC site ID' + (config.defaultSiteId ? '. Defaults to ' + config.defaultSiteId + '.' : ''))
+    siteId: z.string().optional().describe('SFCC site ID (see list_sites)' + (config.defaultSiteId ? '. Defaults to ' + config.defaultSiteId + '.' : ''))
 };
 
 var server = new McpServer({ name: 'sfcc-ocapi', version: '2.0.0' });
@@ -197,7 +197,7 @@ server.registerTool('get_inventory', {
     description: 'Reads ATS, stock level and allocation for a product from an inventory list.',
     inputSchema: {
         id: z.string().describe('Product ID'),
-        inventoryListId: z.string().optional().describe('Inventory list ID' + (config.defaultInventoryListId ? '. Defaults to ' + config.defaultInventoryListId : ''))
+        inventoryListId: z.string().optional().describe('Inventory list ID (see list_inventory_lists)' + (config.defaultInventoryListId ? '. Defaults to ' + config.defaultInventoryListId : ''))
     }
 }, async function (args) {
     var listId = required('inventoryListId', args.inventoryListId, config.defaultInventoryListId, 'SFCC_DEFAULT_INVENTORY_LIST');
@@ -208,8 +208,8 @@ server.registerTool('get_category_custom_attributes', {
     title: 'Get category',
     description: 'Reads category status and custom attributes.',
     inputSchema: {
-        id: z.string().describe('Category ID'),
-        catalogId: z.string().optional().describe('Catalog ID' + (config.defaultCatalogId ? '. Defaults to ' + config.defaultCatalogId : '')),
+        id: z.string().describe('Category ID (see list_categories)'),
+        catalogId: z.string().optional().describe('Catalog ID (see list_catalogs)' + (config.defaultCatalogId ? '. Defaults to ' + config.defaultCatalogId : '')),
         attributes: z.string().optional().describe('Comma-separated custom attribute IDs; all when omitted')
     }
 }, async function (args) {
@@ -227,7 +227,7 @@ server.registerTool('get_category_custom_attributes', {
 server.registerTool('get_customer_group', {
     title: 'Get customer group',
     description: 'Reads a customer group by ID, including type and custom attributes.',
-    inputSchema: Object.assign({ id: z.string().describe('Customer group ID') }, siteShape)
+    inputSchema: Object.assign({ id: z.string().describe('Customer group ID (see list_customer_groups)') }, siteShape)
 }, async function (args) {
     var siteId = required('siteId', args.siteId, config.defaultSiteId, 'SFCC_DEFAULT_SITE');
     return toToolResult(ocapi.dataGet(['sites', siteId, 'customer_groups', args.id]));
@@ -308,7 +308,7 @@ server.registerTool('get_customer', {
         login: z.string().optional().describe('Customer login/email'),
         customerNo: z.string().optional().describe('Customer number'),
         customerListId: z.string().optional().describe('Customer list ID. Defaults to ' + (config.defaultCustomerListId || 'SFCC_DEFAULT_CUSTOMER_LIST, else the list assigned to siteId')),
-        groupId: z.string().optional().describe('Customer group ID to check membership in (static groups)'),
+        groupId: z.string().optional().describe('Customer group ID to check membership in (static groups; see list_customer_groups)'),
         view: z.enum(['summary', 'full']).optional().describe('summary (default): customer_no, login, status, dates. full: all fields with personal data (payment, card, phone, address, email, birthday) masked'),
         siteId: siteShape.siteId
     }
@@ -375,7 +375,7 @@ server.registerTool('get_preference', {
     description: 'Reads a custom site preference value. The preference group is found automatically when groupId is omitted. Refuses credential-like IDs.',
     inputSchema: Object.assign({
         id: z.string().describe('Custom site preference ID (without "c_")'),
-        groupId: z.string().optional().describe('Preference group ID; found automatically when omitted'),
+        groupId: z.string().optional().describe('Preference group ID (see list_preference_groups); found automatically when omitted'),
         instanceType: z.enum(['development', 'staging', 'production', 'sandbox']).optional().describe('Instance type of the value; defaults to sandbox')
     }, siteShape)
 }, async function (args) {
@@ -436,6 +436,139 @@ server.registerTool('get_page_designer_content', {
     inputSchema: contentShape
 }, async function (args) {
     return toToolResult(readContent(args));
+});
+
+// ---- Lookups: IDs other tools need ---------------------------------------
+
+/**
+ * Returns the default-locale string of a localized OCAPI value.
+ * @param {*} value - string or { default, <locale>: ... }
+ * @returns {*} plain value
+ */
+function plain(value) {
+    return value && typeof value === 'object' && !Array.isArray(value) && 'default' in value ? value.default : value;
+}
+
+/**
+ * Reads one page of an OCAPI collection and maps each item to a compact record.
+ * @param {string[]} segments - collection path
+ * @param {Object} args - { start, count, filter }
+ * @param {Function} map - item -> compact record
+ * @returns {Promise<Object>} { total, start, count, next, data } or OCAPI error
+ */
+async function listCollection(segments, args, map) {
+    var start = args.start || 0;
+    var count = Math.min(args.count || 50, 200);
+    var page = await ocapi.dataGet(segments, { start: start, count: count, select: '(**)' });
+    if (page.httpStatus !== 200) { return page; }
+    var data = (page.body.data || []).map(map);
+    if (args.filter) {
+        var needle = args.filter.toLowerCase();
+        data = data.filter(function (item) { return JSON.stringify(item).toLowerCase().indexOf(needle) !== -1; });
+    }
+    var total = page.body.total || 0;
+    return {
+        total: total,
+        start: start,
+        returned: data.length,
+        next: start + count < total ? { start: start + count, count: count } : null,
+        data: data
+    };
+}
+
+var pageShape = {
+    start: z.number().int().min(0).optional().describe('Paging offset (default 0)'),
+    count: z.number().int().min(1).max(200).optional().describe('Page size (default 50, max 200)'),
+    filter: z.string().optional().describe('Case-insensitive substring filter applied to the returned page')
+};
+
+server.registerTool('list_sites', {
+    title: 'List sites',
+    description: 'Lists sites with their customer list and status. The site ID is also the ID of its private content library.',
+    inputSchema: pageShape
+}, async function (args) {
+    return toToolResult(listCollection(['sites'], args, function (s) {
+        return {
+            id: s.id,
+            name: plain(s.display_name),
+            status: s.storefront_status,
+            customerListId: s.customer_list_link && s.customer_list_link.customer_list_id,
+            libraryId: s.id
+        };
+    }));
+});
+
+server.registerTool('list_catalogs', {
+    title: 'List catalogs',
+    description: 'Lists catalogs (master and storefront) with their assigned sites. Use the ID as catalogId.',
+    inputSchema: pageShape
+}, async function (args) {
+    return toToolResult(listCollection(['catalogs'], args, function (c) {
+        return {
+            id: c.id,
+            name: plain(c.name),
+            online: c.online,
+            rootCategory: c.root_category,
+            assignedSites: (c.assigned_sites || []).map(function (s) { return s.id || s; })
+        };
+    }));
+});
+
+server.registerTool('list_categories', {
+    title: 'List categories',
+    description: 'Lists categories of a catalog (flat, paged). Use filter to find a category by ID or name.',
+    inputSchema: Object.assign({
+        catalogId: z.string().optional().describe('Catalog ID' + (config.defaultCatalogId ? '. Defaults to ' + config.defaultCatalogId : ''))
+    }, pageShape)
+}, async function (args) {
+    var catalogId = required('catalogId', args.catalogId, config.defaultCatalogId, 'SFCC_DEFAULT_CATALOG');
+    return toToolResult(listCollection(['catalogs', catalogId, 'categories'], args, function (c) {
+        return { id: c.id, name: plain(c.name), online: c.online, parent: c.parent_category_id };
+    }));
+});
+
+server.registerTool('list_inventory_lists', {
+    title: 'List inventory lists',
+    description: 'Lists inventory lists. Use the ID as inventoryListId in get_inventory.',
+    inputSchema: pageShape
+}, async function (args) {
+    return toToolResult(listCollection(['inventory_lists'], args, function (l) {
+        return { id: l.id, description: plain(l.description), defaultInStock: l.default_instock, assignedSites: (l.assigned_sites || []).map(function (s) { return s.id || s; }) };
+    }));
+});
+
+server.registerTool('list_customer_groups', {
+    title: 'List customer groups',
+    description: 'Lists customer groups of a site with their type (static/dynamic). Use the ID as groupId.',
+    inputSchema: Object.assign({}, siteShape, pageShape)
+}, async function (args) {
+    var siteId = required('siteId', args.siteId, config.defaultSiteId, 'SFCC_DEFAULT_SITE');
+    return toToolResult(listCollection(['sites', siteId, 'customer_groups'], args, function (g) {
+        return { id: g.id, description: plain(g.description), type: g.type, memberCount: g.member_count };
+    }));
+});
+
+server.registerTool('list_preference_groups', {
+    title: 'List site preference groups',
+    description: 'Lists site preference groups with the custom preference IDs in each (credential-like IDs marked). Use as groupId in get_preference.',
+    inputSchema: { filter: z.string().optional().describe('Case-insensitive substring filter on group or preference ID') }
+}, async function (args) {
+    return toToolResult((async function () {
+        var groups = await ocapi.dataGet(['system_object_definitions', 'SitePreferences', 'attribute_groups'], { count: 200, select: '(**)', expand: 'definition' });
+        if (groups.httpStatus !== 200) { return groups; }
+        var needle = (args.filter || '').toLowerCase();
+        return (groups.body.data || []).map(function (g) {
+            return {
+                id: g.id,
+                name: plain(g.display_name),
+                preferences: (g.attribute_definitions || []).map(function (d) {
+                    return isSensitivePreference(d.id) ? d.id + ' (restricted)' : d.id;
+                })
+            };
+        }).filter(function (g) {
+            return !needle || JSON.stringify(g).toLowerCase().indexOf(needle) !== -1;
+        });
+    })());
 });
 
 // ---- Logs (WebDAV, read-only) ---------------------------------------------

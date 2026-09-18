@@ -31,6 +31,11 @@ Data API, Global, for your client — `GET` only, plus `POST` on `customer_searc
     "client_id": "<client id>",
     "resources": [
       { "resource_id": "/products/*", "methods": ["get"], "read_attributes": "(**)" },
+      { "resource_id": "/sites", "methods": ["get"], "read_attributes": "(**)" },
+      { "resource_id": "/catalogs", "methods": ["get"], "read_attributes": "(**)" },
+      { "resource_id": "/catalogs/*/categories", "methods": ["get"], "read_attributes": "(**)" },
+      { "resource_id": "/inventory_lists", "methods": ["get"], "read_attributes": "(**)" },
+      { "resource_id": "/sites/*/customer_groups", "methods": ["get"], "read_attributes": "(**)" },
       { "resource_id": "/products/*/variations", "methods": ["get"], "read_attributes": "(**)" },
       { "resource_id": "/inventory_lists/*/product_inventory_records/*", "methods": ["get"], "read_attributes": "(**)" },
       { "resource_id": "/catalogs/*/categories/*", "methods": ["get"], "read_attributes": "(**)" },
@@ -59,6 +64,10 @@ A 401 with a still-valid token (wrong instance or client) never opens the browse
 
 ### Error hints
 Failed calls return the OCAPI fault plus a `hint`: token rejected (wrong instance/tenant), client ID not added to OCAPI settings, missing resource permission (with the exact `resource_id` to add), unsupported `OCAPI_VERSION`, wrong host. Access tokens are always redacted from responses.
+
+### Lookup tools
+Tools that need an ID of another entity have a matching lookup tool, and "missing argument" errors name it:
+`list_sites` (site, customer list, private library IDs), `list_catalogs`, `list_categories`, `list_inventory_lists`, `list_customer_groups`, `list_preference_groups`.
 
 ## Quick check
 ```bash
