@@ -65,18 +65,93 @@ var server = new McpServer({ name: 'sfcc-ocapi', version: '2.0.0' });
 
 // ---- Catalog --------------------------------------------------------------
 
+// Heavy product fields left out of the summary view unless requested via "fields".
+var PRODUCT_HEAVY_FIELDS = ['image_groups', 'image', 'product_options', 'product_sets', 'assigned_categories',
+    'variation_groups', 'page_description', 'page_keywords', 'bundled_products', 'set_products'];
+var SUMMARY_VALUE_LIMIT = 200;
+
+/**
+ * Removes OCAPI envelope noise ("link", "_type", "_resource_state") recursively.
+ * @param {*} value - OCAPI document part
+ * @returns {*} cleaned copy
+ */
+function stripMeta(value) {
+    if (Array.isArray(value)) { return value.map(stripMeta); }
+    if (value && typeof value === 'object') {
+        var out = {};
+        Object.keys(value).forEach(function (k) {
+            if (k !== 'link' && k !== '_type' && k !== '_resource_state' && k !== '_v') { out[k] = stripMeta(value[k]); }
+        });
+        return out;
+    }
+    return value;
+}
+
+/**
+ * Replaces a long value with a short marker so the agent knows it exists and how to get it.
+ * @param {string} key - field name
+ * @param {*} value - field value
+ * @returns {*} value or marker
+ */
+function shorten(key, value) {
+    var size = JSON.stringify(value).length;
+    if (size <= SUMMARY_VALUE_LIMIT) { return value; }
+    if (typeof value === 'string') {
+        return value.slice(0, SUMMARY_VALUE_LIMIT) + '… [+' + (value.length - SUMMARY_VALUE_LIMIT) + ' chars, request via fields/attributes]';
+    }
+    return '[' + (Array.isArray(value) ? value.length + ' items, ' : '') + size + ' bytes omitted, request "' + key + '" via fields/attributes]';
+}
+
 server.registerTool('get_product', {
     title: 'Get product',
-    description: 'Reads a product via OCAPI Data API: name, brand, online/searchable flags, type, custom attributes, and (for masters) variants.',
-    inputSchema: { id: z.string().describe('Product ID') }
+    description: 'Reads a product via OCAPI Data API. Default is a compact summary with variant IDs; '
+        + 'use view="full" for the whole document, or fields/attributes to pull specific heavy fields.',
+    inputSchema: {
+        id: z.string().describe('Product ID'),
+        view: z.enum(['summary', 'full']).optional().describe('summary (default): core fields, long values shortened, heavy fields (images, options, sets, categories) omitted. full: whole OCAPI document'),
+        variants: z.enum(['none', 'ids', 'full']).optional().describe('For masters: none, ids (default: product_id + variation values), or full variant records'),
+        fields: z.string().optional().describe('Comma-separated top-level fields to return in full, e.g. "image_groups,assigned_categories"'),
+        attributes: z.string().optional().describe('Comma-separated custom attribute IDs (without "c_") to return in full')
+    }
 }, async function (args) {
     return toToolResult((async function () {
+        var view = args.view || 'summary';
+        var variantsMode = args.variants || 'ids';
         var product = await ocapi.dataGet(['products', args.id], { expand: 'all' });
-        if (product.httpStatus === 200 && product.body.type && product.body.type.master) {
-            var variations = await ocapi.dataGet(['products', args.id, 'variations'], { count: 200 });
-            product.body.variations = variations.body;
+        if (product.httpStatus !== 200) { return product; }
+
+        var doc = view === 'full' ? product.body : stripMeta(product.body);
+        var keepFull = (args.fields || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean)
+            .concat((args.attributes || '').split(',').map(function (s) { return s.trim().replace(/^c_/, ''); }).filter(Boolean).map(function (s) { return 'c_' + s; }));
+
+        var out = {};
+        Object.keys(doc).forEach(function (k) {
+            if (k === 'variants') { return; }
+            if (view === 'full' || keepFull.indexOf(k) !== -1) { out[k] = doc[k]; return; }
+            if (PRODUCT_HEAVY_FIELDS.indexOf(k) !== -1) { return; }
+            if (k === 'variation_attributes') {
+                // keep attribute IDs and value IDs only
+                out[k] = (doc[k] || []).map(function (a) {
+                    return { id: a.id, values: (a.values || []).map(function (v) { return v.value; }) };
+                });
+                return;
+            }
+            out[k] = shorten(k, doc[k]);
+        });
+
+        var variants = doc.variants || [];
+        if (variantsMode === 'full') {
+            out.variants = variants;
+        } else if (variantsMode === 'ids') {
+            out.variants = variants.map(function (v) {
+                return { id: v.product_id, values: v.variation_values, orderable: v.orderable };
+            });
         }
-        return product;
+        if (variants.length) { out.variantCount = variants.length; }
+        if (view === 'summary') {
+            out.omittedFields = PRODUCT_HEAVY_FIELDS.filter(function (k) { return doc[k] !== undefined && keepFull.indexOf(k) === -1; });
+        }
+        return out;
     })());
 });
 

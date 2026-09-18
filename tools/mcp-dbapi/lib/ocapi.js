@@ -154,14 +154,16 @@ function explainFault(ctx) {
     if (/ResourcePathNotFound|UnknownApi|UnknownResource/i.test(type)) {
         return 'The API path was not found. Check OCAPI_VERSION ("' + ctx.version + '") and the host ("' + ctx.hostname + '"); the path was ' + ctx.resource + '.';
     }
-    if (/ClientAccessForbidden|InvalidClientId|UnknownClient|ClientIdNotConfigured/i.test(type)) {
+    if (/InvalidClientId|UnknownClient|ClientIdNotConfigured/i.test(type)) {
         return 'Client ID ' + clientId + ' is not configured for this API on ' + ctx.hostname + '. Add it in ' + settingsPath + ' — see README "OCAPI settings" for the full JSON.';
     }
+    // ClientAccessForbidden is returned both when the client is missing and when only this resource is missing.
     if (ctx.httpStatus === 403) {
         return 'Access to ' + ctx.resource + ' is not allowed for client ' + clientId + ' (fault: ' + (type || 'Forbidden') + '). '
             + 'Add this resource to the client in ' + settingsPath + ': '
             + JSON.stringify({ resource_id: ctx.resourcePattern, methods: [ctx.method.toLowerCase()], read_attributes: '(**)' })
-            + '. If it is already there, the Account Manager user may lack a Business Manager role on this instance.';
+            + '. If no OCAPI call works at all, the client itself is not added there (see README "OCAPI settings"). '
+            + 'If the resource is already listed, the Account Manager user may lack a Business Manager role on this instance.';
     }
     if (ctx.httpStatus === 401) {
         return 'The access token was rejected by ' + ctx.hostname + ' (fault: ' + (type || 'Unauthorized') + '). '
