@@ -1,0 +1,19 @@
+# SFCC cartridge is not part of this repo
+int_agent_api/
+*.zip
+
+# Credentials and local config
+dw.json
+.env
+.env.*
+.claude/settings.local.json
+
+# Local artifacts
+.DS_Store
+node_modules/
+logs/
+impex-out/
+tools/mcp-dbapi/tools/
+
+# Auto-generated claude-mem notes
+CLAUDE.md

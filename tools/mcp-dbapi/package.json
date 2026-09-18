@@ -1,0 +1,11 @@
+{
+  "name": "sfcc-ocapi-mcp",
+  "version": "2.0.0",
+  "description": "MCP server for SFCC: read-only OCAPI Data API, WebDAV logs and locally prepared Impex archives. No cartridge required.",
+  "private": true,
+  "type": "module",
+  "main": "server.js",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  }
+}

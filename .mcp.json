@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "dbapi": {
+      "command": "node",
+      "args": ["tools/mcp-dbapi/server.js"]
+    }
+  }
+}

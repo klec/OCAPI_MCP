@@ -1,0 +1,6 @@
+{
+  "hostname": "xxxx-001.dx.commercecloud.salesforce.com",
+  "username": "your.name@example.com",
+  "password": "<WebDAV access key>",
+  "client-id": "<OCAPI client id>"
+}
