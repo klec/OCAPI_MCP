@@ -5,7 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { loadConfig, required, SENSITIVE_PREFERENCE_PATTERN } from './lib/config.js';
-import { createOcapiClient } from './lib/ocapi.js';
+import { createOcapiClient, redact } from './lib/ocapi.js';
 import { createWebdavClient } from './lib/webdav.js';
 import { prepareProductImpex, preparePreferenceImpex } from './lib/impex.js';
 
@@ -28,7 +28,7 @@ async function toToolResult(pending) {
             isError: isOcapi && result.httpStatus >= 400 && result.httpStatus !== 404
         };
     } catch (e) {
-        return { content: [{ type: 'text', text: e.message }], isError: true };
+        return { content: [{ type: 'text', text: redact(e.message) }], isError: true };
     }
 }
 

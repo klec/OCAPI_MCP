@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "dbapi": {
+    "OCAPI_MCP": {
       "command": "node",
       "args": ["tools/mcp-dbapi/server.js"]
     }

@@ -46,6 +46,16 @@ Data API, Global, for your client — `GET` only, plus `POST` on `customer_searc
 ```
 Shop API (site level): `/products/*` → `get` for `get_price`.
 
+### Token renewal
+Before each call the server checks the token's `exp`. On expiry or HTTP 401 it renews the token without user input and retries once:
+1. `sfcc-ci client:auth:renew` — works if you authenticated once with `sfcc-ci client:auth <client> <secret> --renew`;
+2. `sfcc-ci client:auth` — if `SFCC_OAUTH_CLIENT_ID` and `SFCC_OAUTH_CLIENT_SECRET` are set in the MCP server env.
+
+A token from `sfcc-ci auth:login` (browser flow) cannot be renewed this way: run `auth:login` again when it expires (~30 min).
+
+### Error hints
+Failed calls return the OCAPI fault plus a `hint`: token rejected (wrong instance/tenant), client ID not added to OCAPI settings, missing resource permission (with the exact `resource_id` to add), unsupported `OCAPI_VERSION`, wrong host. Access tokens are always redacted from responses.
+
 ## Quick check
 ```bash
 TOKEN=$(sfcc-ci client:auth:token)
