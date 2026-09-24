@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { assertPathSegment } from './config.js';
+import { assertUrlSegment } from './config.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -312,7 +312,7 @@ export function createOcapiClient(config) {
      */
     function buildPath(segments) {
         var safe = segments.map(function (s, i) {
-            return encodeURIComponent(assertPathSegment('path segment #' + (i + 1), String(s)));
+            return encodeURIComponent(assertUrlSegment('path segment #' + (i + 1), String(s)));
         });
         var pattern = segments.map(function (s) { return RESOURCE_NAMES.has(s) ? s : '*'; });
         return { path: '/' + safe.join('/'), pattern: '/' + pattern.join('/') };
@@ -356,7 +356,7 @@ export function createOcapiClient(config) {
             if (!config.clientId) {
                 throw new Error('Shop API needs a client ID: set SFCC_CLIENT_ID or "client-id" in dw.json, and add that client in Business Manager → Open Commerce API Settings → type "Shop", context of site "' + siteId + '".');
             }
-            var shopBase = 'https://' + config.hostname + '/s/' + encodeURIComponent(assertPathSegment('siteId', siteId)) + '/dw/shop/' + config.ocapiVersion;
+            var shopBase = 'https://' + config.hostname + '/s/' + encodeURIComponent(assertUrlSegment('siteId', siteId)) + '/dw/shop/' + config.ocapiVersion;
             var p = buildPath(segments);
             return send({ url: withQuery(shopBase + p.path, Object.assign({ client_id: config.clientId }, query)), init: { method: 'GET' }, api: 'shop', resource: p.path, resourcePattern: p.pattern, withToken: false });
         }

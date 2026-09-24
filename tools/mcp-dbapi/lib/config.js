@@ -50,6 +50,24 @@ export function assertPathSegment(name, value) {
     return value;
 }
 
+// Segments that go into a URL path are percent-encoded before use, so "/", "?" and "#" cannot
+// break out of the segment. Only control characters and ".." are rejected here; SFCC IDs may
+// legitimately contain spaces and other printable characters (e.g. "Embroidery Configs").
+var UNSAFE_URL_SEGMENT_PATTERN = /[\u0000-\u001F\u007F]/;
+
+/**
+ * Validates a value that is percent-encoded into a URL path segment.
+ * @param {string} name - argument name, for the error message
+ * @param {string} value - candidate value
+ * @returns {string} the value, when it is a safe single path segment
+ */
+export function assertUrlSegment(name, value) {
+    if (typeof value !== 'string' || value === '' || UNSAFE_URL_SEGMENT_PATTERN.test(value) || value.indexOf('..') !== -1) {
+        throw new Error('Invalid ' + name + ': must be a non-empty value without control characters or ".."');
+    }
+    return value;
+}
+
 /**
  * Returns the given value or the configured default, failing when neither is set.
  * @param {string} name - argument name, for the error message
