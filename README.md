@@ -15,7 +15,7 @@ MCP server that gives AI agents read access to a Salesforce B2C Commerce (SFCC) 
 ## Install into an SFCC project
 Run the installer in the project root (the folder with `dw.json`). It writes the MCP config for your agent and never touches anything else:
 ```bash
-npx -y -p sfcc-ocapi-mcp@latest ocapi-mcp-add     # nothing is installed into the project
+npx -y sfcc-ocapi-mcp@latest     # nothing is installed into the project
 ```
 Or, to pin the version in `package.json` and work offline afterwards:
 ```bash

@@ -50,6 +50,9 @@ export var AGENTS = [
 
 export var PACKAGE_NAME = 'sfcc-ocapi-mcp';
 
+/** Name of the bin that starts the MCP server itself (not the installer wizard). */
+export var SERVER_BIN = 'ocapi-mcp';
+
 /**
  * Describes how an agent should start the server.
  * - installed: the package is a dependency of the project, so npx runs the local binary offline;
@@ -64,9 +67,12 @@ export function buildRunner(mode, serverPath) {
         if (!serverPath) { throw new Error('The "local" runner needs a path to server.js.'); }
         return { command: 'node', args: [serverPath] };
     }
-    if (mode === 'registry') { return { command: 'npx', args: ['-y', PACKAGE_NAME + '@latest'] };
+    // -p names the package, the trailing argument names the bin inside it: without -p,
+    // npx would look for a bin called after the package, which runs the installer instead.
+    if (mode === 'registry') {
+        return { command: 'npx', args: ['-y', '-p', PACKAGE_NAME + '@latest', SERVER_BIN] };
     }
-    return { command: 'npx', args: ['-y', 'ocapi-mcp'] };
+    return { command: 'npx', args: ['-y', SERVER_BIN] };
 }
 
 /**

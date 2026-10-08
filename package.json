@@ -7,7 +7,8 @@
   "main": "src/server.js",
   "bin": {
     "ocapi-mcp": "src/server.js",
-    "ocapi-mcp-add": "src/cli/add.js"
+    "ocapi-mcp-add": "src/cli/add.js",
+    "sfcc-ocapi-mcp": "src/cli/add.js"
   },
   "files": [
     "src",
