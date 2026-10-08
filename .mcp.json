@@ -2,7 +2,7 @@
   "mcpServers": {
     "OCAPI_MCP": {
       "command": "node",
-      "args": ["tools/mcp-dbapi/server.js"]
+      "args": ["src/server.js"]
     }
   }
 }

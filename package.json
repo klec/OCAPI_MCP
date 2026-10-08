@@ -1,0 +1,41 @@
+{
+  "name": "sfcc-ocapi-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for SFCC: read-only OCAPI Data API, WebDAV logs and locally prepared Impex archives. No cartridge required.",
+  "type": "module",
+  "license": "MIT",
+  "main": "src/server.js",
+  "bin": {
+    "ocapi-mcp": "src/server.js",
+    "ocapi-mcp-add": "src/cli/add.js"
+  },
+  "files": [
+    "src",
+    "templates",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "sfcc",
+    "salesforce-commerce-cloud",
+    "ocapi",
+    "mcp",
+    "model-context-protocol",
+    "demandware"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/klec/OCAPI_MCP.git"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "add": "node src/cli/add.js",
+    "inspect": "npx @modelcontextprotocol/inspector node src/server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.4.3"
+  }
+}

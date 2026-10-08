@@ -12,13 +12,61 @@ MCP server that gives AI agents read access to a Salesforce B2C Commerce (SFCC) 
 - No cartridge and no new endpoints on the instance.
 - The server never writes to the instance. Changes are prepared as import files: they can be reviewed before they are applied, the import runs as a standard job with its own log, and the same file can be reused on another instance.
 
-## Setup
+## Install into an SFCC project
+Run the installer in the project root (the folder with `dw.json`). It writes the MCP config for your agent and never touches anything else:
 ```bash
-cd tools/mcp-dbapi && npm install
-cp dw.json.example dw.json        # in the repo root; never committed
-sfcc-ci auth:login                # or: sfcc-ci client:auth
+npx -y -p sfcc-ocapi-mcp@latest ocapi-mcp-add     # nothing is installed into the project
+```
+Or, to pin the version in `package.json` and work offline afterwards:
+```bash
+npm install -D sfcc-ocapi-mcp
+npx ocapi-mcp-add
+```
+`npm install` creates `package.json`, `package-lock.json` and `node_modules/` in the project root if they are not there yet — in an SFCC repo that keeps npm only inside cartridges, prefer the `npx` form above.
+
+The installer walks through six questions and one safety check:
+1. **which `dw.json`** describes the instance (found automatically in the root, `.vscode/`, `config/` and parent folders; it can also create one from the template);
+2. **`sfcc-ci`** — is it installed, is there a token, is the token still valid; it can run `auth:login` (browser) or `client:auth <id> <secret> --renew` (unattended renewal) for you;
+3. **hostname**, taken from `dw.json`;
+4. **live check** — it calls `GET /sites` and `GET /catalogs` and lets you pick `SFCC_DEFAULT_SITE` and `SFCC_DEFAULT_CATALOG` from the real IDs; a 401/403 is explained with the exact fix;
+5. **how agents start the server** — `installed` (local binary), `registry` (`npx` fetches the package) or `local` (a source checkout);
+6. **which agents** to register: Claude Code (`.mcp.json`), GitHub Copilot (`.vscode/mcp.json`), Cursor (`.cursor/mcp.json`), Windsurf (`.windsurf/mcp.json`). Existing servers in those files are kept, and a second run updates its own entry instead of duplicating it;
+7. finally it makes sure `dw.json` and `impex-out/` are git-ignored, and warns if `dw.json` is already tracked.
+
+The result is an entry like this:
+```json
+{
+  "mcpServers": {
+    "OCAPI_MCP": {
+      "command": "npx",
+      "args": ["-y", "ocapi-mcp"],
+      "env": {
+        "SFCC_HOST": "development-xxx-yyyyyy.demandware.net",
+        "SFCC_DW_JSON_PATH": "./dw.json",
+        "SFCC_DEFAULT_SITE": "ZZZ",
+        "SFCC_DEFAULT_CATALOG": "yyy-xxxxx"
+      }
+    }
+  }
+}
+```
+Non-interactive use, for CI or a scripted onboarding:
+```bash
+npx ocapi-mcp-add --yes --agent claude-code,copilot --site titleist --catalog titleist-master
+npx ocapi-mcp-add --help
+```
+
+## Developing this server
+```bash
+git clone https://github.com/klec/OCAPI_MCP.git && cd OCAPI_MCP && npm install
+cp templates/dw.json.example dw.json   # never committed
+sfcc-ci auth:login                     # or: sfcc-ci client:auth
+npm start                              # node src/server.js
+npm run inspect                        # MCP inspector
 ```
 The OCAPI token is taken from `sfcc-ci client:auth:token`. `dw.json` username/password (WebDAV access key) are used for logs only; `client-id` is used for the Shop API price call.
+
+`dw.json` and `impex-out/` are resolved from the working directory of the agent that starts the server (and `dw.json` is also looked for in parent folders), so the package itself stays read-only inside `node_modules`.
 
 Optional env: `SFCC_HOST`, `SFCC_USERNAME`, `SFCC_PASSWORD`, `SFCC_CLIENT_ID`, `SFCC_DW_JSON_PATH`, `OCAPI_VERSION` (default `v23_2`), `SFCC_DEFAULT_SITE`, `SFCC_DEFAULT_CATALOG`, `SFCC_DEFAULT_INVENTORY_LIST`, `SFCC_DEFAULT_CUSTOMER_LIST` (if unset, `get_customer` takes the list assigned to `siteId` via `/sites/{id}`), `SFCC_DEFAULT_LIBRARY` (default: site ID), `SFCC_PREFERENCE_ALLOWLIST` (preference IDs wrongly treated as secrets), `SFCC_AUTO_LOGIN`, `SFCC_LOGIN_TIMEOUT_MS`, `IMPEX_OUT_DIR`.
 

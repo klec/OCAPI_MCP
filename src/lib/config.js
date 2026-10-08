@@ -1,8 +1,29 @@
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// dw.json and impex-out belong to the SFCC project the server is launched for, not to this
+// package: when installed as a dependency the package lives in node_modules and must not be
+// written to. Both are therefore resolved from the working directory, never from __dirname.
+var DW_JSON_CANDIDATES = ['dw.json', path.join('.vscode', 'dw.json')];
+
+/**
+ * Finds dw.json in the working directory or any parent, so the server also works when the
+ * agent starts it from a subfolder of the project.
+ * @param {string} [startDir] - directory to search from; defaults to the working directory
+ * @returns {string|null} absolute path, or null when no dw.json exists
+ */
+export function findDwJson(startDir) {
+    var dir = path.resolve(startDir || process.cwd());
+    for (;;) {
+        for (var i = 0; i < DW_JSON_CANDIDATES.length; i++) {
+            var candidate = path.join(dir, DW_JSON_CANDIDATES[i]);
+            if (existsSync(candidate)) { return candidate; }
+        }
+        var parent = path.dirname(dir);
+        if (parent === dir) { return null; }
+        dir = parent;
+    }
+}
 
 /**
  * Loads instance settings, preferring env vars, falling back to dw.json.
@@ -10,12 +31,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * @returns {Object} instance config
  */
 export function loadConfig() {
-    var dwJsonPath = process.env.SFCC_DW_JSON_PATH || path.resolve(__dirname, '../../../dw.json');
-    var dwJson = existsSync(dwJsonPath) ? JSON.parse(readFileSync(dwJsonPath, 'utf8')) : {};
+    var dwJsonPath = process.env.SFCC_DW_JSON_PATH
+        ? path.resolve(process.cwd(), process.env.SFCC_DW_JSON_PATH)
+        : findDwJson();
+    var dwJson = dwJsonPath && existsSync(dwJsonPath) ? JSON.parse(readFileSync(dwJsonPath, 'utf8')) : {};
 
     var hostname = process.env.SFCC_HOST || dwJson.hostname;
     if (!hostname) {
-        throw new Error('SFCC host is not configured: set SFCC_HOST or provide dw.json');
+        throw new Error('SFCC host is not configured: set SFCC_HOST, or provide dw.json'
+            + ' (searched from ' + process.cwd() + ' upwards; point SFCC_DW_JSON_PATH at it).'
+            + ' Run "npx ocapi-mcp-add" in the project to generate the MCP config.');
     }
 
     return {
@@ -29,7 +54,7 @@ export function loadConfig() {
         defaultInventoryListId: process.env.SFCC_DEFAULT_INVENTORY_LIST,
         defaultCustomerListId: process.env.SFCC_DEFAULT_CUSTOMER_LIST,
         defaultLibraryId: process.env.SFCC_DEFAULT_LIBRARY,
-        impexOutDir: process.env.IMPEX_OUT_DIR || path.resolve(__dirname, '../../../impex-out')
+        impexOutDir: path.resolve(process.cwd(), process.env.IMPEX_OUT_DIR || 'impex-out')
     };
 }
 

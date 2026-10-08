@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 /* eslint-disable */
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
@@ -61,7 +64,11 @@ var siteShape = {
     siteId: z.string().optional().describe('SFCC site ID (see list_sites)' + (config.defaultSiteId ? '. Defaults to ' + config.defaultSiteId + '.' : ''))
 };
 
-var server = new McpServer({ name: 'sfcc-ocapi', version: '2.0.0' });
+// Reported to the client on initialize; read from the manifest so it cannot drift from the package.
+var packageJson = JSON.parse(readFileSync(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../package.json'), 'utf8'));
+
+var server = new McpServer({ name: 'sfcc-ocapi-mcp', version: packageJson.version });
 
 // ---- Auth -----------------------------------------------------------------
 

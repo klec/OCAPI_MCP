@@ -13,7 +13,6 @@ dw.json
 node_modules/
 logs/
 impex-out/
-tools/mcp-dbapi/tools/
 
 # Auto-generated claude-mem notes
 CLAUDE.md
